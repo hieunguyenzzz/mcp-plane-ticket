@@ -204,7 +204,7 @@ export async function createIssue(options: z.infer<typeof CreateIssueSchema>) {
     body,
   });
 
-  return formatIssue(issue, options.project);
+  return { status: 'done', ticket_id: formatTicketId(options.project, issue.sequence_id) };
 }
 
 export async function updateIssue(options: z.infer<typeof UpdateIssueSchema>) {
@@ -232,12 +232,12 @@ export async function updateIssue(options: z.infer<typeof UpdateIssueSchema>) {
     body.state = stateId;
   }
 
-  const issue = await planeRequest<PlaneIssue>(`/projects/${projectId}/issues/${issueId}/`, {
+  await planeRequest<PlaneIssue>(`/projects/${projectId}/issues/${issueId}/`, {
     method: 'PATCH',
     body,
   });
 
-  return formatIssue(issue, project);
+  return { status: 'done' };
 }
 
 export async function deleteIssue(ticketId: string) {

@@ -94,9 +94,9 @@ export async function listLinks(ticketId: string) {
 }
 
 export async function addLink(options: z.infer<typeof AddLinkSchema>) {
-  const { project, issueId, projectId } = await resolveTicketId(options.ticket_id);
+  const { issueId, projectId } = await resolveTicketId(options.ticket_id);
 
-  const link = await planeRequest<PlaneLink>(
+  await planeRequest<PlaneLink>(
     `/projects/${projectId}/issues/${issueId}/links/`,
     {
       method: 'POST',
@@ -107,14 +107,5 @@ export async function addLink(options: z.infer<typeof AddLinkSchema>) {
     }
   );
 
-  return {
-    ticket_id: options.ticket_id,
-    link: {
-      id: link.id,
-      title: link.title,
-      url: link.url,
-      created_at: link.created_at,
-      created_by: link.created_by,
-    },
-  };
+  return { status: 'done' };
 }
