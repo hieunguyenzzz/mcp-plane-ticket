@@ -87,6 +87,18 @@ export const PROJECTS = {
       'Cancelled': '0d6a9346-2576-459a-8c0c-a292b1412f0c',
     },
   },
+  '4ORM4': {
+    id: '0bd124d7-16ce-47ef-9109-94652d169a4a',
+    name: '4orm4.ae',
+    states: {
+      'Backlog': 'a5513fdc-5718-4267-93f9-bbd3ff8bfd87',
+      'Todo': '3507479f-0f7c-4c30-acd6-578f2546ebf1',
+      'In Progress': 'b86f19ba-907e-4ef4-a395-d35e488687d6',
+      'Live Testing': '25b215b6-b491-4221-bdf1-3547cd343c6c',
+      'Done': 'da42d2be-beaf-4fad-b0ad-3b265d8bf40c',
+      'Cancelled': '25d49ff7-c79a-45ef-a26c-ce22f49e8983',
+    },
+  },
 } as const;
 
 export type ProjectIdentifier = keyof typeof PROJECTS;
@@ -121,9 +133,9 @@ export function getValidStates(project: ProjectIdentifier): string[] {
   return Object.keys(config.states);
 }
 
-// Parse ticket ID like "SBS-123" into { project: "SBS", sequenceId: 123 }
+// Parse ticket ID like "SBS-123" or "4ORM4-26" into { project: "SBS", sequenceId: 123 }
 export function parseTicketId(ticketId: string): { project: ProjectIdentifier; sequenceId: number } | null {
-  const match = ticketId.match(/^([A-Z]+)-(\d+)$/);
+  const match = ticketId.match(/^([A-Z0-9]+)-(\d+)$/);
   if (!match) return null;
   const project = match[1];
   if (!isValidProject(project)) return null;

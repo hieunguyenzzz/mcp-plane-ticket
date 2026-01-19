@@ -12,11 +12,11 @@ import {
 } from '../config/projects.js';
 import { PlaneValidationError, PlaneNotFoundError } from '../common/errors.js';
 
-const projectIdentifiers = ['SBS', 'MOB', 'DE', 'OMNI', 'MWP', 'QUELL'] as const;
+const projectIdentifiers = ['SBS', 'MOB', 'DE', 'OMNI', 'MWP', 'QUELL', '4ORM4'] as const;
 
 // Schemas
 export const ListIssuesSchema = z.object({
-  project: z.enum(projectIdentifiers).describe('Project identifier (SBS, MOB, DE, OMNI, MWP, QUELL)'),
+  project: z.enum(projectIdentifiers).describe('Project identifier (SBS, MOB, DE, OMNI, MWP, QUELL, 4ORM4)'),
   state: z.string().optional().describe('Filter by state name (e.g., "In Progress", "Todo")'),
   priority: z.enum(['none', 'low', 'medium', 'high', 'urgent']).optional().describe('Filter by priority'),
   limit: z.number().default(50).describe('Maximum number of issues to return'),
@@ -106,7 +106,7 @@ async function resolveTicketId(ticketId: string): Promise<{
   const parsed = parseTicketId(ticketId);
   if (!parsed) {
     throw new PlaneValidationError(
-      `Invalid ticket ID format: ${ticketId}. Expected format like SBS-123`
+      `Invalid ticket ID format: ${ticketId}. Expected format like SBS-123 or 4ORM4-26`
     );
   }
 
