@@ -96,7 +96,7 @@ export async function listComments(ticketId: string) {
 export async function addComment(options: z.infer<typeof AddCommentSchema>) {
   const { project, issueId, projectId } = await resolveTicketId(options.ticket_id);
 
-  const comment = await planeRequest<PlaneComment>(
+  await planeRequest<PlaneComment>(
     `/projects/${projectId}/issues/${issueId}/comments/`,
     {
       method: 'POST',
@@ -106,13 +106,5 @@ export async function addComment(options: z.infer<typeof AddCommentSchema>) {
     }
   );
 
-  return {
-    ticket_id: options.ticket_id,
-    comment: {
-      id: comment.id,
-      comment_html: comment.comment_html,
-      created_at: comment.created_at,
-      created_by: comment.created_by,
-    },
-  };
+  return { status: 'done' };
 }
