@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { planeRequest } from '../common/utils.js';
 import {
   getProjectConfig,
+  getProjectInstance,
   parseTicketId,
   formatTicketId,
   ProjectIdentifier,
@@ -16,6 +17,11 @@ export const ListCommentsSchema = z.object({
 export const AddCommentSchema = z.object({
   ticket_id: z.string().describe('Ticket ID in display format (e.g., SBS-123)'),
   comment_html: z.string().min(1).describe('Comment content in HTML format'),
+});
+
+export const DeleteCommentSchema = z.object({
+  ticket_id: z.string().describe('Ticket ID in display format (e.g., SBS-123)'),
+  comment_id: z.string().describe('Comment UUID (from plane_list_comments)'),
 });
 
 // Types
@@ -37,6 +43,10 @@ interface PlaneIssueListResponse {
   results?: PlaneIssue[];
 }
 
+interface PlaneCommentListResponse {
+  results?: PlaneComment[];
+}
+
 // Helper to resolve ticket ID to project and issue UUID
 async function resolveTicketId(ticketId: string): Promise<{
   project: ProjectIdentifier;
@@ -51,10 +61,13 @@ async function resolveTicketId(ticketId: string): Promise<{
   }
 
   const projectConfig = getProjectConfig(parsed.project);
+  const instance = getProjectInstance(parsed.project);
 
   // Fetch issues and filter by sequence_id
   const response = await planeRequest<PlaneIssue[] | PlaneIssueListResponse>(
-    `/projects/${projectConfig.id}/issues/`
+    `/projects/${projectConfig.id}/issues/`,
+    {},
+    instance,
   );
 
   const issues = Array.isArray(response) ? response : response.results || [];
@@ -75,9 +88,14 @@ async function resolveTicketId(ticketId: string): Promise<{
 export async function listComments(ticketId: string) {
   const { project, issueId, projectId } = await resolveTicketId(ticketId);
 
-  const comments = await planeRequest<PlaneComment[]>(
-    `/projects/${projectId}/issues/${issueId}/comments/`
+  const response = await planeRequest<PlaneComment[] | PlaneCommentListResponse>(
+    `/projects/${projectId}/issues/${issueId}/comments/`,
+    {},
+    getProjectInstance(project),
   );
+
+  // Handle both array and paginated object responses
+  const comments = Array.isArray(response) ? response : response.results || [];
 
   return {
     ticket_id: ticketId,
@@ -103,7 +121,20 @@ export async function addComment(options: z.infer<typeof AddCommentSchema>) {
       body: {
         comment_html: options.comment_html,
       },
-    }
+    },
+    getProjectInstance(project),
+  );
+
+  return { status: 'done' };
+}
+
+export async function deleteComment(options: z.infer<typeof DeleteCommentSchema>) {
+  const { project, issueId, projectId } = await resolveTicketId(options.ticket_id);
+
+  await planeRequest(
+    `/projects/${projectId}/issues/${issueId}/comments/${options.comment_id}/`,
+    { method: 'DELETE' },
+    getProjectInstance(project),
   );
 
   return { status: 'done' };

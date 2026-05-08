@@ -3,6 +3,7 @@ import { planeRequest } from '../common/utils.js';
 import {
   PROJECTS,
   getProjectConfig,
+  getProjectInstance,
   getStateId,
   getStateName,
   getValidStates,
@@ -12,11 +13,11 @@ import {
 } from '../config/projects.js';
 import { PlaneValidationError, PlaneNotFoundError } from '../common/errors.js';
 
-const projectIdentifiers = ['SBS', 'MOB', 'DE', 'OMNI', 'MWP', 'QUELL', '4ORM4'] as const;
+const projectIdentifiers = ['SBS', 'MOB', 'DE', 'OMNI', 'MWP', 'QUELL', '4ORM4', 'MAILA', 'ERPSB', 'RANKL'] as const;
 
 // Schemas
 export const ListIssuesSchema = z.object({
-  project: z.enum(projectIdentifiers).describe('Project identifier (SBS, MOB, DE, OMNI, MWP, QUELL, 4ORM4)'),
+  project: z.enum(projectIdentifiers).describe('Project identifier (SBS, MOB, DE, OMNI, MWP, QUELL, 4ORM4, MAILA, ERPSB, RANKL)'),
   state: z.string().optional().describe('Filter by state name (e.g., "In Progress", "Todo")'),
   priority: z.enum(['none', 'low', 'medium', 'high', 'urgent']).optional().describe('Filter by priority'),
   limit: z.number().default(50).describe('Maximum number of issues to return'),
@@ -53,6 +54,14 @@ export const UpdateIssueSchema = z.object({
 
 export const DeleteIssueSchema = z.object({
   ticket_id: z.string().describe('Ticket ID in display format (e.g., SBS-123)'),
+});
+
+export const SearchIssuesSchema = z.object({
+  project: z.enum(projectIdentifiers).describe('Project identifier (SBS, MOB, DE, OMNI, MWP, QUELL, 4ORM4, MAILA, ERPSB, RANKL)'),
+  query: z.string().min(1).describe('Search text to match against issue titles and descriptions'),
+  state: z.string().optional().describe('Optional: Filter by state name'),
+  priority: z.enum(['none', 'low', 'medium', 'high', 'urgent']).optional().describe('Optional: Filter by priority'),
+  limit: z.number().default(20).describe('Maximum results (default: 20)'),
 });
 
 // Types
@@ -111,10 +120,13 @@ async function resolveTicketId(ticketId: string): Promise<{
   }
 
   const projectConfig = getProjectConfig(parsed.project);
+  const instance = getProjectInstance(parsed.project);
 
   // Fetch issues and filter by sequence_id
   const response = await planeRequest<PlaneIssue[] | PlaneIssueListResponse>(
-    `/projects/${projectConfig.id}/issues/`
+    `/projects/${projectConfig.id}/issues/`,
+    {},
+    instance,
   );
 
   const issues = Array.isArray(response) ? response : response.results || [];
@@ -135,31 +147,48 @@ async function resolveTicketId(ticketId: string): Promise<{
 export async function listIssues(options: z.infer<typeof ListIssuesSchema>) {
   const projectConfig = getProjectConfig(options.project);
 
-  let endpoint = `/projects/${projectConfig.id}/issues/?per_page=${options.limit}`;
-
-  // Add state filter if provided
+  // Validate state if provided
+  let targetStateId: string | undefined;
   if (options.state) {
-    const stateId = getStateId(options.project, options.state);
-    if (!stateId) {
+    targetStateId = getStateId(options.project, options.state);
+    if (!targetStateId) {
       const validStates = getValidStates(options.project);
       throw new PlaneValidationError(
         `Invalid state "${options.state}" for project ${options.project}. Valid states: ${validStates.join(', ')}`
       );
     }
-    endpoint += `&state=${stateId}`;
   }
 
-  // Add priority filter if provided
+  // Fetch more issues for client-side filtering (API filters don't work reliably)
+  const fetchLimit = options.state || options.priority ? 100 : options.limit;
+  const endpoint = `/projects/${projectConfig.id}/issues/?per_page=${fetchLimit}`;
+  const instance = getProjectInstance(options.project);
+
+  const response = await planeRequest<PlaneIssue[] | PlaneIssueListResponse>(endpoint, {}, instance);
+  let issues = Array.isArray(response) ? response : response.results || [];
+
+  // Client-side filtering (Plane API doesn't respect filter params)
+  if (targetStateId) {
+    issues = issues.filter((issue) => issue.state === targetStateId);
+  }
   if (options.priority) {
-    endpoint += `&priority=${options.priority}`;
+    issues = issues.filter((issue) => issue.priority === options.priority);
   }
 
-  const response = await planeRequest<PlaneIssue[] | PlaneIssueListResponse>(endpoint);
-  const issues = Array.isArray(response) ? response : response.results || [];
+  // Apply limit after filtering
+  const limitedIssues = issues.slice(0, options.limit);
 
   return {
-    issues: issues.map((issue) => formatIssue(issue, options.project)),
-    total: issues.length,
+    issues: limitedIssues.map((issue) => ({
+      ticket_id: formatTicketId(options.project, issue.sequence_id),
+      name: issue.name,
+      priority: issue.priority,
+      state: getStateName(options.project, issue.state) || issue.state,
+      assignees: issue.assignees,
+      start_date: issue.start_date,
+      target_date: issue.target_date,
+    })),
+    total: limitedIssues.length,
     project: options.project,
   };
 }
@@ -167,7 +196,11 @@ export async function listIssues(options: z.infer<typeof ListIssuesSchema>) {
 export async function getIssue(ticketId: string) {
   const { project, issueId, projectId } = await resolveTicketId(ticketId);
 
-  const issue = await planeRequest<PlaneIssue>(`/projects/${projectId}/issues/${issueId}/`);
+  const issue = await planeRequest<PlaneIssue>(
+    `/projects/${projectId}/issues/${issueId}/`,
+    {},
+    getProjectInstance(project),
+  );
 
   return formatIssue(issue, project);
 }
@@ -199,10 +232,11 @@ export async function createIssue(options: z.infer<typeof CreateIssueSchema>) {
   if (options.target_date) body.target_date = options.target_date;
   if (options.parent) body.parent = options.parent;
 
-  const issue = await planeRequest<PlaneIssue>(`/projects/${projectConfig.id}/issues/`, {
-    method: 'POST',
-    body,
-  });
+  const issue = await planeRequest<PlaneIssue>(
+    `/projects/${projectConfig.id}/issues/`,
+    { method: 'POST', body },
+    getProjectInstance(options.project),
+  );
 
   return { status: 'done', ticket_id: formatTicketId(options.project, issue.sequence_id) };
 }
@@ -232,20 +266,81 @@ export async function updateIssue(options: z.infer<typeof UpdateIssueSchema>) {
     body.state = stateId;
   }
 
-  await planeRequest<PlaneIssue>(`/projects/${projectId}/issues/${issueId}/`, {
-    method: 'PATCH',
-    body,
-  });
+  await planeRequest<PlaneIssue>(
+    `/projects/${projectId}/issues/${issueId}/`,
+    { method: 'PATCH', body },
+    getProjectInstance(project),
+  );
 
   return { status: 'done' };
 }
 
 export async function deleteIssue(ticketId: string) {
-  const { issueId, projectId } = await resolveTicketId(ticketId);
+  const { project, issueId, projectId } = await resolveTicketId(ticketId);
 
-  await planeRequest(`/projects/${projectId}/issues/${issueId}/`, {
-    method: 'DELETE',
-  });
+  await planeRequest(
+    `/projects/${projectId}/issues/${issueId}/`,
+    { method: 'DELETE' },
+    getProjectInstance(project),
+  );
 
   return { success: true, ticket_id: ticketId };
+}
+
+export async function searchIssues(options: z.infer<typeof SearchIssuesSchema>) {
+  const projectConfig = getProjectConfig(options.project);
+  const queryLower = options.query.toLowerCase();
+
+  // Validate state if provided
+  let targetStateId: string | undefined;
+  if (options.state) {
+    targetStateId = getStateId(options.project, options.state);
+    if (!targetStateId) {
+      const validStates = getValidStates(options.project);
+      throw new PlaneValidationError(
+        `Invalid state "${options.state}" for project ${options.project}. Valid states: ${validStates.join(', ')}`
+      );
+    }
+  }
+
+  // Fetch up to 100 issues (API filters don't work reliably, filter client-side)
+  const endpoint = `/projects/${projectConfig.id}/issues/?per_page=100`;
+
+  const response = await planeRequest<PlaneIssue[] | PlaneIssueListResponse>(
+    endpoint,
+    {},
+    getProjectInstance(options.project),
+  );
+  const issues = Array.isArray(response) ? response : response.results || [];
+
+  // Client-side filtering: text search + state + priority
+  const matches = issues.filter((issue) => {
+    // Text search on name and description_html
+    const nameMatch = issue.name.toLowerCase().includes(queryLower);
+    const descMatch = issue.description_html?.toLowerCase().includes(queryLower) ?? false;
+    if (!nameMatch && !descMatch) return false;
+
+    // State filter
+    if (targetStateId && issue.state !== targetStateId) return false;
+
+    // Priority filter
+    if (options.priority && issue.priority !== options.priority) return false;
+
+    return true;
+  });
+
+  // Return slim results
+  const results = matches.slice(0, options.limit).map((issue) => ({
+    ticket_id: formatTicketId(options.project, issue.sequence_id),
+    name: issue.name,
+    state: getStateName(options.project, issue.state) || issue.state,
+    priority: issue.priority,
+  }));
+
+  return {
+    results,
+    total: results.length,
+    query: options.query,
+    project: options.project,
+  };
 }

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { planeRequest } from '../common/utils.js';
 import {
   getProjectConfig,
+  getProjectInstance,
   parseTicketId,
   ProjectIdentifier,
 } from '../config/projects.js';
@@ -51,10 +52,13 @@ async function resolveTicketId(ticketId: string): Promise<{
   }
 
   const projectConfig = getProjectConfig(parsed.project);
+  const instance = getProjectInstance(parsed.project);
 
   // Fetch issues and filter by sequence_id
   const response = await planeRequest<PlaneIssue[] | PlaneIssueListResponse>(
-    `/projects/${projectConfig.id}/issues/`
+    `/projects/${projectConfig.id}/issues/`,
+    {},
+    instance,
   );
 
   const issues = Array.isArray(response) ? response : response.results || [];
@@ -75,9 +79,12 @@ async function resolveTicketId(ticketId: string): Promise<{
 export async function listLinks(ticketId: string) {
   const { project, issueId, projectId } = await resolveTicketId(ticketId);
 
-  const links = await planeRequest<PlaneLink[]>(
-    `/projects/${projectId}/issues/${issueId}/links/`
+  const response = await planeRequest<PlaneLink[] | { results?: PlaneLink[] }>(
+    `/projects/${projectId}/issues/${issueId}/links/`,
+    {},
+    getProjectInstance(project),
   );
+  const links = Array.isArray(response) ? response : response.results || [];
 
   return {
     ticket_id: ticketId,
@@ -94,7 +101,7 @@ export async function listLinks(ticketId: string) {
 }
 
 export async function addLink(options: z.infer<typeof AddLinkSchema>) {
-  const { issueId, projectId } = await resolveTicketId(options.ticket_id);
+  const { project, issueId, projectId } = await resolveTicketId(options.ticket_id);
 
   await planeRequest<PlaneLink>(
     `/projects/${projectId}/issues/${issueId}/links/`,
@@ -104,7 +111,8 @@ export async function addLink(options: z.infer<typeof AddLinkSchema>) {
         title: options.title,
         url: options.url,
       },
-    }
+    },
+    getProjectInstance(project),
   );
 
   return { status: 'done' };
