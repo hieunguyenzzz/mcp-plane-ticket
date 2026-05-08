@@ -13,11 +13,12 @@ import {
 } from '../config/projects.js';
 import { PlaneValidationError, PlaneNotFoundError } from '../common/errors.js';
 
-const projectIdentifiers = ['SBS', 'MOB', 'DE', 'OMNI', 'MWP', 'QUELL', '4ORM4', 'MAILA', 'ERPSB', 'RANKL'] as const;
+const projectIdentifiers = Object.keys(PROJECTS) as [ProjectIdentifier, ...ProjectIdentifier[]];
+const projectListLabel = projectIdentifiers.join(', ');
 
 // Schemas
 export const ListIssuesSchema = z.object({
-  project: z.enum(projectIdentifiers).describe('Project identifier (SBS, MOB, DE, OMNI, MWP, QUELL, 4ORM4, MAILA, ERPSB, RANKL)'),
+  project: z.enum(projectIdentifiers).describe(`Project identifier (${projectListLabel})`),
   state: z.string().optional().describe('Filter by state name (e.g., "In Progress", "Todo")'),
   priority: z.enum(['none', 'low', 'medium', 'high', 'urgent']).optional().describe('Filter by priority'),
   limit: z.number().default(50).describe('Maximum number of issues to return'),
@@ -57,7 +58,7 @@ export const DeleteIssueSchema = z.object({
 });
 
 export const SearchIssuesSchema = z.object({
-  project: z.enum(projectIdentifiers).describe('Project identifier (SBS, MOB, DE, OMNI, MWP, QUELL, 4ORM4, MAILA, ERPSB, RANKL)'),
+  project: z.enum(projectIdentifiers).describe(`Project identifier (${projectListLabel})`),
   query: z.string().min(1).describe('Search text to match against issue titles and descriptions'),
   state: z.string().optional().describe('Optional: Filter by state name'),
   priority: z.enum(['none', 'low', 'medium', 'high', 'urgent']).optional().describe('Optional: Filter by priority'),
