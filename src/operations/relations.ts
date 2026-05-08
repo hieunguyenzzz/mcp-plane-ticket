@@ -32,25 +32,9 @@ interface PlaneIssueListResponse {
   results?: PlaneIssue[];
 }
 
-interface PlaneRelationItem {
-  id: string;
-  name: string;
-  sequence_id: number;
-  project_id: string;
-  relation_type: string;
-  state_id: string;
-  priority: string;
-  created_at: string;
-  updated_at: string;
-}
-
-interface PlaneRelationsResponse {
-  blocking: PlaneRelationItem[];
-  blocked_by: PlaneRelationItem[];
-  duplicate: PlaneRelationItem[];
-  relates_to: PlaneRelationItem[];
-  [key: string]: PlaneRelationItem[];
-}
+// Plane API returns relations as { blocking: ["uuid", ...], blocked_by: [...], ... }
+// Values are bare issue UUIDs — caller must resolve them to ticket IDs.
+type PlaneRelationsResponse = Record<string, string[]>;
 
 // Helper to resolve ticket ID to project and issue UUID
 async function resolveTicketId(ticketId: string): Promise<{
@@ -91,35 +75,55 @@ async function resolveTicketId(ticketId: string): Promise<{
 // Operations
 export async function listRelations(ticketId: string) {
   const { project, issueId, projectId } = await resolveTicketId(ticketId);
+  const instance = getProjectInstance(project);
 
-  // Relations endpoint only exists under work-items path (Plane v1.3+)
   const response = await planeRequest<PlaneRelationsResponse>(
     `/projects/${projectId}/work-items/${issueId}/relations/`,
     {},
-    getProjectInstance(project),
+    instance,
   );
 
-  // Response is grouped by relation type: { blocking: [...], blocked_by: [...], ... }
-  const allRelations: Array<{ relation_type: string } & PlaneRelationItem> = [];
-  for (const [type, items] of Object.entries(response)) {
-    if (Array.isArray(items)) {
-      for (const item of items) {
-        allRelations.push({ ...item, relation_type: type });
+  // Pull only known relation types — the API also returns time-based ones
+  // (start_after/finish_before/...) that aren't surfaced via the MCP today.
+  const pairs: Array<{ relation_type: string; uuid: string }> = [];
+  for (const type of relationTypes) {
+    const ids = response[type];
+    if (Array.isArray(ids)) {
+      for (const uuid of ids) {
+        if (typeof uuid === 'string') pairs.push({ relation_type: type, uuid });
       }
     }
   }
 
+  if (pairs.length === 0) {
+    return { ticket_id: ticketId, relations: [], total: 0 };
+  }
+
+  // Resolve UUIDs to ticket IDs via the parent project's issue list. Cross-project
+  // relations on the same instance fall back to a short-UUID hint.
+  const issuesResp = await planeRequest<PlaneIssue[] | PlaneIssueListResponse>(
+    `/projects/${projectId}/issues/?per_page=200`,
+    {},
+    instance,
+  );
+  const issues = Array.isArray(issuesResp) ? issuesResp : issuesResp.results || [];
+  const uuidToSeq = new Map<string, number>();
+  for (const i of issues) uuidToSeq.set(i.id, i.sequence_id);
+
   return {
     ticket_id: ticketId,
-    relations: allRelations.map((rel) => ({
-      id: rel.id,
-      relation_type: rel.relation_type,
-      related_ticket_id: formatTicketId(project, rel.sequence_id),
-      name: rel.name,
-      priority: rel.priority,
-      created_at: rel.created_at,
-    })),
-    total: allRelations.length,
+    relations: pairs.map(({ relation_type, uuid }) => {
+      const seq = uuidToSeq.get(uuid);
+      return {
+        relation_type,
+        related_ticket_id:
+          seq !== undefined
+            ? formatTicketId(project, seq)
+            : `<unresolved:${uuid.slice(0, 8)}>`,
+        related_issue_id: uuid,
+      };
+    }),
+    total: pairs.length,
   };
 }
 
