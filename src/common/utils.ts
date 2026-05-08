@@ -1,4 +1,8 @@
-import { PLANE_CONFIG } from '../config/projects.js';
+import {
+  InstanceAlias,
+  getInstanceConfig,
+  resolveInstanceApiKey,
+} from '../config/projects.js';
 import { createPlaneError, PlaneAuthError } from './errors.js';
 
 type RequestOptions = {
@@ -8,18 +12,27 @@ type RequestOptions = {
 
 export async function planeRequest<T = unknown>(
   endpoint: string,
-  options: RequestOptions = {}
+  options: RequestOptions = {},
+  instance: InstanceAlias,
 ): Promise<T> {
-  if (!PLANE_CONFIG.apiKey) {
-    throw new PlaneAuthError('PLANE_API_KEY environment variable is not set');
+  const cfg = getInstanceConfig(instance);
+  const apiKey = resolveInstanceApiKey(instance);
+
+  if (!apiKey) {
+    const fallbackHint = cfg.apiKeyEnvFallback
+      ? ` (or ${cfg.apiKeyEnvFallback})`
+      : '';
+    throw new PlaneAuthError(
+      `Plane API key for instance "${cfg.alias}" is not set. Set ${cfg.apiKeyEnv}${fallbackHint}.`
+    );
   }
 
-  const url = `${PLANE_CONFIG.baseUrl}/workspaces/${PLANE_CONFIG.workspace}${endpoint}`;
+  const url = `${cfg.baseUrl}/workspaces/${cfg.workspace}${endpoint}`;
 
   const response = await fetch(url, {
     method: options.method || 'GET',
     headers: {
-      'X-API-Key': PLANE_CONFIG.apiKey,
+      'X-API-Key': apiKey,
       'Content-Type': 'application/json',
     },
     body: options.body ? JSON.stringify(options.body) : undefined,

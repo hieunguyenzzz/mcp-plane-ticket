@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import express, { Request, Response } from 'express';
 
 import * as issues from './operations/issues.js';
 import * as comments from './operations/comments.js';
 import * as links from './operations/links.js';
+import * as relations from './operations/relations.js';
 import { isPlaneError, formatPlaneError } from './common/errors.js';
+
+const PORT = parseInt(process.env.PORT || '8080', 10);
+const USE_HTTP = process.env.USE_HTTP === 'true';
 
 const server = new Server(
   {
@@ -59,6 +65,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         inputSchema: zodToJsonSchema(issues.DeleteIssueSchema),
       },
       {
+        name: 'plane_search_issues',
+        description:
+          'Search issues by text in titles and descriptions. Returns slim results (ticket_id, name, state, priority).',
+        inputSchema: zodToJsonSchema(issues.SearchIssuesSchema),
+      },
+      {
         name: 'plane_list_comments',
         description: 'List all comments on an issue.',
         inputSchema: zodToJsonSchema(comments.ListCommentsSchema),
@@ -67,6 +79,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: 'plane_add_comment',
         description: 'Add a comment to an issue. Comment should be in HTML format.',
         inputSchema: zodToJsonSchema(comments.AddCommentSchema),
+      },
+      {
+        name: 'plane_delete_comment',
+        description:
+          'Delete a comment from an issue by comment UUID (get UUID from plane_list_comments).',
+        inputSchema: zodToJsonSchema(comments.DeleteCommentSchema),
       },
       {
         name: 'plane_list_links',
@@ -78,6 +96,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         description:
           'Add an external link to an issue. Useful for associating Monday.com tickets.',
         inputSchema: zodToJsonSchema(links.AddLinkSchema),
+      },
+      {
+        name: 'plane_list_relations',
+        description:
+          'List all issue relations for an issue (relates_to, blocked_by, blocking, duplicate).',
+        inputSchema: zodToJsonSchema(relations.ListRelationsSchema),
+      },
+      {
+        name: 'plane_add_relation',
+        description:
+          'Create a relation between two issues. Relation types: relates_to, blocked_by, blocking, duplicate.',
+        inputSchema: zodToJsonSchema(relations.AddRelationSchema),
       },
     ],
   };
@@ -131,6 +161,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'plane_search_issues': {
+        const args = issues.SearchIssuesSchema.parse(request.params.arguments);
+        const result = await issues.searchIssues(args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
       case 'plane_list_comments': {
         const args = comments.ListCommentsSchema.parse(request.params.arguments);
         const result = await comments.listComments(args.ticket_id);
@@ -147,6 +185,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'plane_delete_comment': {
+        const args = comments.DeleteCommentSchema.parse(request.params.arguments);
+        const result = await comments.deleteComment(args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
       case 'plane_list_links': {
         const args = links.ListLinksSchema.parse(request.params.arguments);
         const result = await links.listLinks(args.ticket_id);
@@ -158,6 +204,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'plane_add_link': {
         const args = links.AddLinkSchema.parse(request.params.arguments);
         const result = await links.addLink(args);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'plane_list_relations': {
+        const args = relations.ListRelationsSchema.parse(request.params.arguments);
+        const result = await relations.listRelations(args.ticket_id);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      case 'plane_add_relation': {
+        const args = relations.AddRelationSchema.parse(request.params.arguments);
+        const result = await relations.addRelation(args);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
@@ -193,9 +255,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function runServer() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('Plane MCP Server running on stdio');
+  if (USE_HTTP) {
+    const app = express();
+    app.use(express.json());
+
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+
+    await server.connect(transport);
+
+    // Health check endpoint
+    app.get('/health', (_req: Request, res: Response) => {
+      res.json({ status: 'ok' });
+    });
+
+    // MCP endpoint
+    app.post('/mcp', async (req: Request, res: Response) => {
+      await transport.handleRequest(req, res, req.body);
+    });
+
+    app.get('/mcp', (_req: Request, res: Response) => {
+      res.status(405).send('Method not allowed. Use POST for MCP requests.');
+    });
+
+    app.listen(PORT, () => {
+      console.log(`Plane MCP Server running on HTTP port ${PORT}`);
+    });
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error('Plane MCP Server running on stdio');
+  }
 }
 
 runServer().catch((error) => {

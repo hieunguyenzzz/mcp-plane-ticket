@@ -1,13 +1,54 @@
-// Plane API configuration
-export const PLANE_CONFIG = {
-  baseUrl: 'https://plane.mobelaris.com/api/v1',
-  workspace: 'soundboxstore',
-  apiKey: process.env.PLANE_API_KEY || '',
-};
+// Plane instance registry. Each instance has its own base URL, workspace, and API key env var.
+// Mirrors the dokploy MCP's SERVERS pattern.
 
-// Project configurations with IDs and state mappings
+export interface InstanceConfig {
+  alias: string;
+  baseUrl: string;
+  workspace: string;
+  apiKeyEnv: string;
+  // Optional fallback env var (e.g., legacy PLANE_API_KEY for the default instance)
+  apiKeyEnvFallback?: string;
+}
+
+export const INSTANCES = {
+  mobelaris: {
+    alias: 'mobelaris',
+    baseUrl: 'https://plane.mobelaris.com/api/v1',
+    workspace: 'soundboxstore',
+    apiKeyEnv: 'MOBELARIS_PLANE_API_KEY',
+    apiKeyEnvFallback: 'PLANE_API_KEY',
+  },
+  soundboxstore: {
+    alias: 'soundboxstore',
+    baseUrl: 'https://plane.soundboxstore.com/api/v1',
+    workspace: 'soundboxstore',
+    apiKeyEnv: 'SOUNDBOXSTORE_PLANE_API_KEY',
+  },
+} as const satisfies Record<string, InstanceConfig>;
+
+export type InstanceAlias = keyof typeof INSTANCES;
+export const DEFAULT_INSTANCE: InstanceAlias = 'mobelaris';
+
+export function getInstanceConfig(alias: InstanceAlias): InstanceConfig {
+  return INSTANCES[alias] as InstanceConfig;
+}
+
+export function resolveInstanceApiKey(alias: InstanceAlias): string {
+  const cfg = getInstanceConfig(alias);
+  return (
+    process.env[cfg.apiKeyEnv]
+    || (cfg.apiKeyEnvFallback ? process.env[cfg.apiKeyEnvFallback] : '')
+    || ''
+  );
+}
+
+// Project configurations with IDs and state mappings.
+// Each project belongs to exactly one instance (project never lives on both at once).
+// Step 1: every existing project stays on `mobelaris`; AUTOMATION is the only soundboxstore project.
+// Step 2/3: flip `instance` (and `id`/`states`) per project as it migrates.
 export const PROJECTS = {
   SBS: {
+    instance: 'mobelaris' as InstanceAlias,
     id: '2c53d0b7-3627-4fbc-8021-050254d4e7dd',
     name: 'soundboxstore.com',
     states: {
@@ -21,6 +62,7 @@ export const PROJECTS = {
     },
   },
   OMNI: {
+    instance: 'mobelaris' as InstanceAlias,
     id: '79b51293-36c9-4a96-be2e-261bca5604d7',
     name: 'omni.com',
     states: {
@@ -33,6 +75,7 @@ export const PROJECTS = {
     },
   },
   MOB: {
+    instance: 'mobelaris' as InstanceAlias,
     id: 'e031245f-8d5e-44a2-b325-4d4ad4850a58',
     name: 'mobelaris.com',
     states: {
@@ -47,6 +90,7 @@ export const PROJECTS = {
     },
   },
   MWP: {
+    instance: 'mobelaris' as InstanceAlias,
     id: 'c28b96e5-29fa-415d-af79-8125d4d486c3',
     name: 'merakiweddingplanner.com',
     states: {
@@ -59,6 +103,7 @@ export const PROJECTS = {
     },
   },
   DE: {
+    instance: 'mobelaris' as InstanceAlias,
     id: 'cfcfcaa3-5d35-47af-9f56-57a2db3951b6',
     name: 'designereditions.com',
     states: {
@@ -74,6 +119,7 @@ export const PROJECTS = {
     },
   },
   QUELL: {
+    instance: 'mobelaris' as InstanceAlias,
     id: '24966761-9dc8-4513-afd2-132b294eae7b',
     name: 'quelldesign.com',
     states: {
@@ -88,6 +134,7 @@ export const PROJECTS = {
     },
   },
   '4ORM4': {
+    instance: 'mobelaris' as InstanceAlias,
     id: '0bd124d7-16ce-47ef-9109-94652d169a4a',
     name: '4orm4.ae',
     states: {
@@ -99,6 +146,68 @@ export const PROJECTS = {
       'Cancelled': '25d49ff7-c79a-45ef-a26c-ce22f49e8983',
     },
   },
+  MAILA: {
+    instance: 'mobelaris' as InstanceAlias,
+    id: '985b823f-c43f-45a4-aac2-378780dafaf1',
+    name: 'mail-agent',
+    states: {
+      'Backlog': '82e83f8e-2db2-4900-8e14-ecda3f91f35f',
+      'Todo': 'abe67f55-10b8-42dc-bf9c-cf7197b9844e',
+      'In Progress': '8a9e69a0-331b-42d3-b39e-f043322bb36c',
+      'Done': 'f8418ce6-dbcc-4fad-a91d-41d59f5454b2',
+      'Cancelled': '68a9c340-e206-43a2-bf9f-c234b88a7b7d',
+    },
+  },
+  ERPSB: {
+    instance: 'mobelaris' as InstanceAlias,
+    id: 'c63830fe-6a30-49a2-acc6-c674b35bd728',
+    name: 'soundbox-erp',
+    states: {
+      'Backlog': '9a677618-8d1c-443e-919c-fc6eac8392a6',
+      'Todo': '28473f9f-143b-428b-b0cf-6991ff3e4959',
+      'In Progress': '05a57678-75f3-4983-ac35-baa779976bf2',
+      'Done': '88f57d31-ffa8-47fa-8683-c074ca95eea6',
+      'Cancelled': 'b62a8a4c-bd9f-4be2-ad77-21e95ea36275',
+    },
+  },
+  ALPHA: {
+    instance: 'mobelaris' as InstanceAlias,
+    id: 'ebc14d31-4526-4eca-bdf6-6482debd40a2',
+    name: 'alphanode-mcp',
+    states: {
+      'Backlog': 'a5fe0845-5b64-41cc-a986-5b4062cc3b1e',
+      'Todo': '92e77b06-b052-4879-a696-0da7b4cb5f21',
+      'In Progress': '1ba0c484-2518-446b-8443-32d390537e5a',
+      'PR Submitted': 'f4e54b25-4016-4bdb-838f-cf8e5afad377',
+      'Live Testing': '00fa5682-1581-4678-88e2-d22d8b914d9e',
+      'Done': 'fd985fe0-f093-4ada-aee3-a41708b359da',
+      'Cancelled': '2a0648ac-8dd1-4693-b184-df1b887b0760',
+    },
+  },
+  RANKL: {
+    instance: 'mobelaris' as InstanceAlias,
+    id: 'b2f23909-c227-466d-bf98-5d28cf50b965',
+    name: 'ranklore',
+    states: {
+      'Backlog': '48e6936e-e406-4557-9670-40ab09d9b0c9',
+      'Todo': 'd309342a-c056-4500-b1c5-572aba232bcf',
+      'In Progress': '17b5e803-4337-4787-bba1-9fb56c08d035',
+      'Done': '2c27c280-6442-49ca-a9e8-4eb34d26a967',
+      'Cancelled': '7b831e81-f0be-4375-b61c-d513f1400aa9',
+    },
+  },
+  AUTOMATION: {
+    instance: 'soundboxstore' as InstanceAlias,
+    id: 'fc36ac46-70f2-4512-80b5-5e33457e3b12',
+    name: 'Automation',
+    states: {
+      'Backlog': '0decf0a9-cec8-4fc9-83d9-bad6bddff6f8',
+      'Todo': 'f3b1e375-c6a3-498c-8fd2-1b5515d4067d',
+      'In Progress': '7e3632bb-0e8a-4f4c-800c-7270383f562e',
+      'Done': '2816572a-fdaf-4b0d-98a3-0e946992fc8a',
+      'Cancelled': '73d962b2-ec25-4568-9a66-0ec8b3f32ee7',
+    },
+  },
 } as const;
 
 export type ProjectIdentifier = keyof typeof PROJECTS;
@@ -107,6 +216,10 @@ export type Priority = 'none' | 'low' | 'medium' | 'high' | 'urgent';
 // Helper functions
 export function getProjectConfig(identifier: ProjectIdentifier) {
   return PROJECTS[identifier];
+}
+
+export function getProjectInstance(identifier: ProjectIdentifier): InstanceAlias {
+  return PROJECTS[identifier].instance;
 }
 
 export function isValidProject(identifier: string): identifier is ProjectIdentifier {
