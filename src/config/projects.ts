@@ -208,6 +208,18 @@ export const PROJECTS = {
       'Cancelled': '73d962b2-ec25-4568-9a66-0ec8b3f32ee7',
     },
   },
+  INVENTORY: {
+    instance: 'soundboxstore' as InstanceAlias,
+    id: '42eb53dc-1a65-4b99-b536-cd1fcec7017e',
+    name: 'inventory management',
+    states: {
+      'Backlog': '36e8b4a7-85e6-46d3-aafd-90371078bbe9',
+      'Todo': '47136dba-60e0-49d0-b089-89d8720bd343',
+      'In Progress': '300f2d27-0173-4069-804c-9d44b3994bf4',
+      'Done': '686075f8-5cf7-43b4-933d-81327fe84274',
+      'Cancelled': '4792269d-c782-46f4-a254-13d71f1a4d08',
+    },
+  },
 } as const;
 
 export type ProjectIdentifier = keyof typeof PROJECTS;
@@ -226,24 +238,95 @@ export function isValidProject(identifier: string): identifier is ProjectIdentif
   return identifier in PROJECTS;
 }
 
-export function getStateId(project: ProjectIdentifier, stateName: string): string | undefined {
-  const config = PROJECTS[project];
-  const states = config.states as Record<string, string>;
-  return states[stateName];
+// --- Live state resolution -------------------------------------------------
+// The hardcoded `states` maps above go stale whenever a new state is added in
+// Plane (e.g. INVENTORY's "Live Testing", added 2026-06-10). To avoid that,
+// states are resolved from the live Plane API and cached per-process; the
+// hardcoded map is only a fallback if the live fetch fails.
+
+interface PlaneState {
+  id: string;
+  name: string;
 }
 
-export function getStateName(project: ProjectIdentifier, stateId: string): string | undefined {
+// id keyed by lowercased name, plus original-cased names for display.
+interface StateMap {
+  byName: Map<string, string>; // lowercased name -> id
+  names: Map<string, string>; // lowercased name -> original-cased name
+}
+
+const stateCache = new Map<ProjectIdentifier, StateMap>();
+
+function toStateMap(entries: Array<[string, string]>): StateMap {
+  return {
+    byName: new Map(entries.map(([name, id]) => [name.toLowerCase(), id])),
+    names: new Map(entries.map(([name]) => [name.toLowerCase(), name])),
+  };
+}
+
+function hardcodedStateMap(project: ProjectIdentifier): StateMap {
+  const states = PROJECTS[project].states as Record<string, string>;
+  return toStateMap(Object.entries(states));
+}
+
+// Fetches the full state list for a project from the live Plane API, caching
+// the result per-process. `fetcher` is injected so this module stays free of
+// the request/auth plumbing (which lives in common/utils).
+async function loadStates(
+  project: ProjectIdentifier,
+  fetcher: (endpoint: string, instance: InstanceAlias) => Promise<unknown>,
+): Promise<StateMap> {
+  const cached = stateCache.get(project);
+  if (cached) return cached;
+
   const config = PROJECTS[project];
-  const states = config.states as Record<string, string>;
-  for (const [name, id] of Object.entries(states)) {
-    if (id === stateId) return name;
+  let map: StateMap;
+  try {
+    const response = await fetcher(`/projects/${config.id}/states/`, config.instance);
+    const states = (Array.isArray(response)
+      ? response
+      : (response as { results?: PlaneState[] })?.results || []) as PlaneState[];
+    if (states.length === 0) throw new Error('empty state list');
+    map = toStateMap(states.map((s) => [s.name, s.id]));
+  } catch {
+    // Live fetch failed (auth/network) — fall back to the hardcoded map so the
+    // tool degrades gracefully rather than failing every state operation.
+    map = hardcodedStateMap(project);
+  }
+
+  stateCache.set(project, map);
+  return map;
+}
+
+// Resolve a state name -> UUID against live states (case-insensitive).
+export async function resolveStateId(
+  project: ProjectIdentifier,
+  stateName: string,
+  fetcher: (endpoint: string, instance: InstanceAlias) => Promise<unknown>,
+): Promise<string | undefined> {
+  const map = await loadStates(project, fetcher);
+  return map.byName.get(stateName.toLowerCase());
+}
+
+// Resolve a state UUID -> display name against live states.
+export async function resolveStateName(
+  project: ProjectIdentifier,
+  stateId: string,
+  fetcher: (endpoint: string, instance: InstanceAlias) => Promise<unknown>,
+): Promise<string | undefined> {
+  const map = await loadStates(project, fetcher);
+  for (const [lower, id] of map.byName.entries()) {
+    if (id === stateId) return map.names.get(lower);
   }
   return undefined;
 }
 
-export function getValidStates(project: ProjectIdentifier): string[] {
-  const config = PROJECTS[project];
-  return Object.keys(config.states);
+export async function getValidStates(
+  project: ProjectIdentifier,
+  fetcher: (endpoint: string, instance: InstanceAlias) => Promise<unknown>,
+): Promise<string[]> {
+  const map = await loadStates(project, fetcher);
+  return Array.from(map.names.values());
 }
 
 // Parse ticket ID like "SBS-123" or "4ORM4-26" into { project: "SBS", sequenceId: 123 }

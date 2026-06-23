@@ -4,14 +4,20 @@ import {
   PROJECTS,
   getProjectConfig,
   getProjectInstance,
-  getStateId,
-  getStateName,
+  resolveStateId,
+  resolveStateName,
   getValidStates,
   parseTicketId,
   formatTicketId,
+  InstanceAlias,
   ProjectIdentifier,
 } from '../config/projects.js';
 import { PlaneValidationError, PlaneNotFoundError } from '../common/errors.js';
+
+// Adapter so the state resolver in config/projects can fetch live states
+// without importing the request/auth plumbing directly.
+const statesFetcher = (endpoint: string, instance: InstanceAlias) =>
+  planeRequest(endpoint, {}, instance);
 
 const projectIdentifiers = Object.keys(PROJECTS) as [ProjectIdentifier, ...ProjectIdentifier[]];
 const projectListLabel = projectIdentifiers.join(', ');
@@ -88,14 +94,14 @@ interface PlaneIssueListResponse {
 }
 
 // Helper to format issue response with display ticket ID
-function formatIssue(issue: PlaneIssue, project: ProjectIdentifier) {
+async function formatIssue(issue: PlaneIssue, project: ProjectIdentifier) {
   return {
     ticket_id: formatTicketId(project, issue.sequence_id),
     id: issue.id,
     name: issue.name,
     description_html: issue.description_html,
     priority: issue.priority,
-    state: getStateName(project, issue.state) || issue.state,
+    state: (await resolveStateName(project, issue.state, statesFetcher)) || issue.state,
     state_id: issue.state,
     assignees: issue.assignees,
     labels: issue.labels,
@@ -151,9 +157,9 @@ export async function listIssues(options: z.infer<typeof ListIssuesSchema>) {
   // Validate state if provided
   let targetStateId: string | undefined;
   if (options.state) {
-    targetStateId = getStateId(options.project, options.state);
+    targetStateId = await resolveStateId(options.project, options.state, statesFetcher);
     if (!targetStateId) {
-      const validStates = getValidStates(options.project);
+      const validStates = await getValidStates(options.project, statesFetcher);
       throw new PlaneValidationError(
         `Invalid state "${options.state}" for project ${options.project}. Valid states: ${validStates.join(', ')}`
       );
@@ -180,15 +186,15 @@ export async function listIssues(options: z.infer<typeof ListIssuesSchema>) {
   const limitedIssues = issues.slice(0, options.limit);
 
   return {
-    issues: limitedIssues.map((issue) => ({
+    issues: await Promise.all(limitedIssues.map(async (issue) => ({
       ticket_id: formatTicketId(options.project, issue.sequence_id),
       name: issue.name,
       priority: issue.priority,
-      state: getStateName(options.project, issue.state) || issue.state,
+      state: (await resolveStateName(options.project, issue.state, statesFetcher)) || issue.state,
       assignees: issue.assignees,
       start_date: issue.start_date,
       target_date: issue.target_date,
-    })),
+    }))),
     total: limitedIssues.length,
     project: options.project,
   };
@@ -203,7 +209,7 @@ export async function getIssue(ticketId: string) {
     getProjectInstance(project),
   );
 
-  return formatIssue(issue, project);
+  return await formatIssue(issue, project);
 }
 
 export async function createIssue(options: z.infer<typeof CreateIssueSchema>) {
@@ -211,10 +217,10 @@ export async function createIssue(options: z.infer<typeof CreateIssueSchema>) {
 
   // Resolve state name to ID, default to "Todo"
   const stateName = options.state || 'Todo';
-  const stateId = getStateId(options.project, stateName);
+  const stateId = await resolveStateId(options.project, stateName, statesFetcher);
 
   if (!stateId) {
-    const validStates = getValidStates(options.project);
+    const validStates = await getValidStates(options.project, statesFetcher);
     throw new PlaneValidationError(
       `Invalid state "${stateName}" for project ${options.project}. Valid states: ${validStates.join(', ')}`
     );
@@ -257,9 +263,9 @@ export async function updateIssue(options: z.infer<typeof UpdateIssueSchema>) {
 
   // Resolve state name to ID if provided
   if (options.state !== undefined) {
-    const stateId = getStateId(project, options.state);
+    const stateId = await resolveStateId(project, options.state, statesFetcher);
     if (!stateId) {
-      const validStates = getValidStates(project);
+      const validStates = await getValidStates(project, statesFetcher);
       throw new PlaneValidationError(
         `Invalid state "${options.state}" for project ${project}. Valid states: ${validStates.join(', ')}`
       );
@@ -295,9 +301,9 @@ export async function searchIssues(options: z.infer<typeof SearchIssuesSchema>) 
   // Validate state if provided
   let targetStateId: string | undefined;
   if (options.state) {
-    targetStateId = getStateId(options.project, options.state);
+    targetStateId = await resolveStateId(options.project, options.state, statesFetcher);
     if (!targetStateId) {
-      const validStates = getValidStates(options.project);
+      const validStates = await getValidStates(options.project, statesFetcher);
       throw new PlaneValidationError(
         `Invalid state "${options.state}" for project ${options.project}. Valid states: ${validStates.join(', ')}`
       );
@@ -331,12 +337,12 @@ export async function searchIssues(options: z.infer<typeof SearchIssuesSchema>) 
   });
 
   // Return slim results
-  const results = matches.slice(0, options.limit).map((issue) => ({
+  const results = await Promise.all(matches.slice(0, options.limit).map(async (issue) => ({
     ticket_id: formatTicketId(options.project, issue.sequence_id),
     name: issue.name,
-    state: getStateName(options.project, issue.state) || issue.state,
+    state: (await resolveStateName(options.project, issue.state, statesFetcher)) || issue.state,
     priority: issue.priority,
-  }));
+  })));
 
   return {
     results,
